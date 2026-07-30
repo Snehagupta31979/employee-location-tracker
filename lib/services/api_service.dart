@@ -8,7 +8,8 @@ class ApiService {
   /// Emulator -> 10.0.2.2
   /// Physical Phone -> 192.168.x.x
   /// Web (Chrome) -> localhost
-  static const String baseUrl = "http://192.168.1.16:8080";
+  static const String baseUrl =
+    "https://employee-location-tracker-backend-production.up.railway.app";
 
   static const Map<String, String> headers = {
     "Content-Type": "application/json",
@@ -321,11 +322,13 @@ class ApiService {
   /// ==========================
   static Future<http.Response> addManualStop(Map<String, dynamic> fields) async {
     final url = Uri.parse("$baseUrl/api/location/stops/manual");
-    return await _client.post(
+    final response = await _client.post(
       url,
       headers: headers,
       body: jsonEncode(fields),
     );
+    print("ADD MANUAL STOP STATUS: ${response.statusCode}  BODY: ${response.body}");
+    return response;
   }
   /// ==========================
   /// GET MY MANUAL STOPS (Employee)
