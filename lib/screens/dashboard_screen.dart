@@ -71,6 +71,21 @@ class _DashboardScreenState extends State<DashboardScreen> {
   List<Map<String, dynamic>> adminAllStops = [];
   bool isLoadingAdminStops = false;
   bool isStopsExpanded = false;
+  List<Map<String, dynamic>> myPlans = [];
+  bool isLoadingMyPlans = false;
+  bool isPlanFormExpanded = false;
+  int? editingPlanId;
+  final taskController = TextEditingController();
+  final locationController = TextEditingController();
+  final purposeController = TextEditingController();
+  TimeOfDay? planStartTime;
+  TimeOfDay? planEndTime;
+  String planPriority = "MEDIUM";
+  String planStatus = "PENDING";
+  bool isSubmittingPlan = false;
+
+  List<Map<String, dynamic>> adminAllPlans = [];
+  bool isLoadingAdminPlans = false;
   List<Map<String, dynamic>> manualStops = [];
   List<Map<String, dynamic>> myManualStops = [];
   bool isLoadingMyManualStops = false;
@@ -100,7 +115,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
   String? reportError;
   int? selectedEmployeeId;
   String? selectedEmployeeName;
-  DateTime selectedReportDate = DateTime.now();
+  DateTime selectedFromDate = DateTime.now();
+  DateTime selectedToDate = DateTime.now();
   bool isExporting = false;
 
   Timer? _trackingTimer;
@@ -122,6 +138,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _fetchCurrentLocation();
     _fetchUserRole();
     _fetchMyTodayStops();
+    _fetchMyTodayPlans();
     _fetchMyTodayRoute();
     _fetchMyManualStops();
 
@@ -138,6 +155,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   void dispose() {
     _trackingTimer?.cancel();
+    taskController.dispose();
+    locationController.dispose();
+    purposeController.dispose();
     _adminRefreshTimer?.cancel();
     super.dispose();
   }
@@ -561,6 +581,191 @@ class _DashboardScreenState extends State<DashboardScreen> {
       setState(() => isLoadingAdminStops = false);
     }
   }
+  Future<void> _fetchMyTodayPlans() async {
+    setState(() => isLoadingMyPlans = true);
+    try {
+      final response = await ApiService.getMyTodayPlans();
+      if (response.statusCode == 200) {
+        final List<dynamic> data = jsonDecode(response.body);
+        if (!mounted) return;
+        setState(() {
+          myPlans = List<Map<String, dynamic>>.from(data);
+          isLoadingMyPlans = false;
+        });
+      } else {
+        if (!mounted) return;
+        setState(() => isLoadingMyPlans = false);
+      }
+    } catch (e) {
+      print("My Plans Fetch Error: $e");
+      if (!mounted) return;
+      setState(() => isLoadingMyPlans = false);
+    }
+  }
+
+  Future<void> _fetchAdminTodayPlans() async {
+    setState(() => isLoadingAdminPlans = true);
+    try {
+      final response = await ApiService.getAllTodayPlans();
+      if (response.statusCode == 200) {
+        final List<dynamic> data = jsonDecode(response.body);
+        if (!mounted) return;
+        setState(() {
+          adminAllPlans = List<Map<String, dynamic>>.from(data);
+          isLoadingAdminPlans = false;
+        });
+      } else {
+        if (!mounted) return;
+        setState(() => isLoadingAdminPlans = false);
+      }
+    } catch (e) {
+      print("Admin Plans Fetch Error: $e");
+      if (!mounted) return;
+      setState(() => isLoadingAdminPlans = false);
+    }
+  }
+
+  void _resetPlanForm() {
+    taskController.clear();
+    locationController.clear();
+    purposeController.clear();
+    planStartTime = null;
+    planEndTime = null;
+    planPriority = "MEDIUM";
+    planStatus = "PENDING";
+    editingPlanId = null;
+  }
+
+  void _loadPlanIntoForm(Map<String, dynamic> plan) {
+    taskController.text = plan["task"] ?? "";
+    locationController.text = plan["location"] ?? "";
+    purposeController.text = plan["purpose"] ?? "";
+    final start = plan["startTime"]?.toString();
+    final end = plan["endTime"]?.toString();
+    if (start != null && start.contains(":")) {
+      final parts = start.split(":");
+      planStartTime = TimeOfDay(hour: int.parse(parts[0]), minute: int.parse(parts[1]));
+    }
+    if (end != null && end.contains(":")) {
+      final parts = end.split(":");
+      planEndTime = TimeOfDay(hour: int.parse(parts[0]), minute: int.parse(parts[1]));
+    }
+    planPriority = plan["priority"] ?? "MEDIUM";
+    planStatus = plan["status"] ?? "PENDING";
+    editingPlanId = plan["id"];
+  }
+
+  String? _formatTimeOfDay(TimeOfDay? t) {
+    if (t == null) return null;
+    return "${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}:00";
+  }
+
+  Future<void> _submitPlan() async {
+    if (taskController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Task is required")),
+      );
+      return;
+    }
+
+    setState(() => isSubmittingPlan = true);
+
+    final fields = {
+      "task": taskController.text.trim(),
+      "location": locationController.text.trim(),
+      "purpose": purposeController.text.trim(),
+      "startTime": _formatTimeOfDay(planStartTime),
+      "endTime": _formatTimeOfDay(planEndTime),
+      "priority": planPriority,
+      "status": planStatus,
+    };
+
+    try {
+      final response = editingPlanId != null
+          ? await ApiService.updatePlan(editingPlanId!, fields)
+          : await ApiService.createPlan(fields);
+
+      if (!mounted) return;
+
+      if (response.statusCode == 200) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(editingPlanId != null ? "Plan updated" : "Plan submitted")),
+        );
+        _resetPlanForm();
+        await _fetchMyTodayPlans();
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Failed (status ${response.statusCode})")),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Error: $e")),
+      );
+    } finally {
+      if (mounted) setState(() => isSubmittingPlan = false);
+    }
+  }
+
+  Future<void> _pickPlanLocation() async {
+    if (nearbyPlaces.isEmpty) {
+      await _fetchNearbyPlaces();
+    }
+
+    if (!mounted) return;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) {
+        return DraggableScrollableSheet(
+          initialChildSize: 0.6,
+          minChildSize: 0.3,
+          maxChildSize: 0.9,
+          expand: false,
+          builder: (context, scrollController) {
+            return Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text("Nearby Schools / Colleges / Universities",
+                      style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 10),
+                  Expanded(
+                    child: nearbyPlaces.isEmpty
+                        ? const Center(
+                            child: Text("No nearby places found. You can type manually.",
+                                style: TextStyle(color: Colors.black54)))
+                        : ListView.builder(
+                            controller: scrollController,
+                            itemCount: nearbyPlaces.length,
+                            itemBuilder: (context, index) {
+                              final place = nearbyPlaces[index];
+                              return ListTile(
+                                leading: const Icon(Icons.school_outlined, color: primaryBlue),
+                                title: Text(place["name"] ?? ""),
+                                subtitle: Text(place["type"] ?? ""),
+                                onTap: () {
+                                  locationController.text = place["name"] ?? "";
+                                  Navigator.pop(context);
+                                },
+                              );
+                            },
+                          ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
   Future<void> _fetchManualStops() async {
     setState(() => isLoadingManualStops = true);
     try {
@@ -821,7 +1026,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         if (userRole == "ADMIN") {
           _fetchAllEmployees();
           _fetchAdminTodayStops();
-          _fetchManualStops();
+          _fetchAdminTodayPlans();
           _adminRefreshTimer?.cancel();
           _adminRefreshTimer = Timer.periodic(
               const Duration(seconds: 15), (_) => _fetchAllEmployees());
@@ -847,11 +1052,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
     });
 
     try {
-      final dateStr =
-          "${selectedReportDate.year}-${selectedReportDate.month.toString().padLeft(2, '0')}-${selectedReportDate.day.toString().padLeft(2, '0')}";
+      final fromDateStr =
+          "${selectedFromDate.year}-${selectedFromDate.month.toString().padLeft(2, '0')}-${selectedFromDate.day.toString().padLeft(2, '0')}";
+      final toDateStr =
+          "${selectedToDate.year}-${selectedToDate.month.toString().padLeft(2, '0')}-${selectedToDate.day.toString().padLeft(2, '0')}";
 
-      final response =
-          await ApiService.getReport(employeeId: employeeId, date: dateStr);
+      final response = await ApiService.getReport(
+          employeeId: employeeId, fromDate: fromDateStr, toDate: toDateStr);
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
@@ -2423,8 +2630,350 @@ print("STOP TRACKING STATUS: ${res.statusCode}  BODY: ${res.body}");
                 ),
 
                 const SizedBox(height: 14),
+                if (userRole != "ADMIN") ...[
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(cardRadius),
+                        boxShadow: cardShadow,
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          InkWell(
+                            onTap: () {
+                              setState(() {
+                                isPlanFormExpanded = !isPlanFormExpanded;
+                              });
+                            },
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Row(
+                                  children: const [
+                                    Icon(Icons.event_note_outlined,
+                                        color: primaryBlue, size: 18),
+                                    SizedBox(width: 6),
+                                    Text("Today's Plan",
+                                        style: TextStyle(
+                                            fontSize: 16, fontWeight: FontWeight.bold)),
+                                  ],
+                                ),
+                                Icon(
+                                  isPlanFormExpanded
+                                      ? Icons.keyboard_arrow_up
+                                      : Icons.keyboard_arrow_down,
+                                  color: primaryBlue,
+                                ),
+                              ],
+                            ),
+                          ),
+                          if (isPlanFormExpanded) ...[
+                            const SizedBox(height: 14),
+                            TextField(
+                              controller: taskController,
+                              decoration: InputDecoration(
+                                labelText: "Task",
+                                filled: true,
+                                fillColor: const Color(0xFFF6F7FB),
+                                border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(10),
+                                    borderSide: BorderSide.none),
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            TextField(
+                              controller: locationController,
+                              decoration: InputDecoration(
+                                labelText: "Location",
+                                filled: true,
+                                fillColor: const Color(0xFFF6F7FB),
+                                border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(10),
+                                    borderSide: BorderSide.none),
+                                suffixIcon: IconButton(
+                                  icon: const Icon(Icons.map_outlined, color: primaryBlue),
+                                  onPressed: _pickPlanLocation,
+                                  tooltip: "Pick nearby location",
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            TextField(
+                              controller: purposeController,
+                              decoration: InputDecoration(
+                                labelText: "Purpose",
+                                filled: true,
+                                fillColor: const Color(0xFFF6F7FB),
+                                border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(10),
+                                    borderSide: BorderSide.none),
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: InkWell(
+                                    onTap: () async {
+                                      final picked = await showTimePicker(
+                                        context: context,
+                                        initialTime: planStartTime ?? TimeOfDay.now(),
+                                      );
+                                      if (picked != null) {
+                                        setState(() => planStartTime = picked);
+                                      }
+                                    },
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 12, vertical: 14),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFFF6F7FB),
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                      child: Text(planStartTime == null
+                                          ? "Start"
+                                          : planStartTime!.format(context)),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: InkWell(
+                                    onTap: () async {
+                                      final picked = await showTimePicker(
+                                        context: context,
+                                        initialTime: planEndTime ?? TimeOfDay.now(),
+                                      );
+                                      if (picked != null) {
+                                        setState(() => planEndTime = picked);
+                                      }
+                                    },
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 12, vertical: 14),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFFF6F7FB),
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                      child: Text(planEndTime == null
+                                          ? "End"
+                                          : planEndTime!.format(context)),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 10),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: DropdownButtonFormField<String>(
+                                    value: planPriority,
+                                    decoration: InputDecoration(
+                                      labelText: "Priority",
+                                      filled: true,
+                                      fillColor: const Color(0xFFF6F7FB),
+                                      border: OutlineInputBorder(
+                                          borderRadius: BorderRadius.circular(10),
+                                          borderSide: BorderSide.none),
+                                    ),
+                                    items: const ["LOW", "MEDIUM", "HIGH"]
+                                        .map((p) => DropdownMenuItem(value: p, child: Text(p)))
+                                        .toList(),
+                                    onChanged: (v) {
+                                      if (v != null) setState(() => planPriority = v);
+                                    },
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: DropdownButtonFormField<String>(
+                                    value: planStatus,
+                                    decoration: InputDecoration(
+                                      labelText: "Status",
+                                      filled: true,
+                                      fillColor: const Color(0xFFF6F7FB),
+                                      border: OutlineInputBorder(
+                                          borderRadius: BorderRadius.circular(10),
+                                          borderSide: BorderSide.none),
+                                    ),
+                                    items: const ["PENDING", "IN_PROGRESS", "COMPLETED"]
+                                        .map((s) => DropdownMenuItem(value: s, child: Text(s)))
+                                        .toList(),
+                                    onChanged: (v) {
+                                      if (v != null) setState(() => planStatus = v);
+                                    },
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 14),
+                            SizedBox(
+                              width: double.infinity,
+                              child: ElevatedButton(
+                                onPressed: isSubmittingPlan ? null : _submitPlan,
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: primaryBlue,
+                                  padding: const EdgeInsets.symmetric(vertical: 12),
+                                  shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(10)),
+                                ),
+                                child: isSubmittingPlan
+                                    ? const SizedBox(
+                                        width: 18,
+                                        height: 18,
+                                        child: CircularProgressIndicator(
+                                            color: Colors.white, strokeWidth: 2))
+                                    : Text(
+                                        editingPlanId != null ? "Update Plan" : "Submit Plan",
+                                        style: const TextStyle(color: Colors.white),
+                                      ),
+                              ),
+                            ),
+                            if (myPlans.isNotEmpty) ...[
+                              const SizedBox(height: 16),
+                              const Divider(),
+                              const SizedBox(height: 8),
+                              const Text("Your Submitted Plans",
+                                  style: TextStyle(
+                                      fontSize: 13, fontWeight: FontWeight.bold)),
+                              const SizedBox(height: 8),
+                              ...myPlans.map((plan) => Container(
+                                    margin: const EdgeInsets.only(bottom: 10),
+                                    padding: const EdgeInsets.all(10),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFF6F7FB),
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            children: [
+                                              Text(plan["task"] ?? "",
+                                                  style: const TextStyle(
+                                                      fontSize: 13,
+                                                      fontWeight: FontWeight.w600)),
+                                              Text(
+                                                  "${plan["location"] ?? "--"}  •  ${plan["status"] ?? ""}",
+                                                  style: const TextStyle(
+                                                      fontSize: 11,
+                                                      color: Colors.black54)),
+                                            ],
+                                          ),
+                                        ),
+                                        TextButton(
+                                          onPressed: () {
+                                            setState(() {
+                                              isPlanFormExpanded = true;
+                                              _loadPlanIntoForm(plan);
+                                            });
+                                          },
+                                          child: const Text("Edit"),
+                                        ),
+                                      ],
+                                    ),
+                                  )),
+                            ],
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                ],
 
                 if (userRole == "ADMIN") ...[
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(cardRadius),
+                        boxShadow: cardShadow,
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: const [
+                              Icon(Icons.event_note_outlined, color: primaryBlue, size: 18),
+                              SizedBox(width: 6),
+                              Text("Today's Plans (All Employees)",
+                                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                          if (isLoadingAdminPlans)
+                            const Text("Loading...",
+                                style: TextStyle(color: Colors.black54)),
+                          if (!isLoadingAdminPlans && adminAllPlans.isEmpty)
+                            const Text("No plans submitted today.",
+                                style: TextStyle(color: Colors.black54)),
+                          if (!isLoadingAdminPlans && adminAllPlans.isNotEmpty)
+                            ...adminAllPlans.map((plan) => Container(
+                                  margin: const EdgeInsets.only(bottom: 10),
+                                  padding: const EdgeInsets.all(12),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFF6F7FB),
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                        children: [
+                                          Expanded(
+                                            child: Text(
+                                              "${plan["employeeName"] ?? "--"} — ${plan["task"] ?? ""}",
+                                              style: const TextStyle(
+                                                  fontSize: 13, fontWeight: FontWeight.w700),
+                                            ),
+                                          ),
+                                          if (plan["edited"] == true)
+                                            Container(
+                                              padding: const EdgeInsets.symmetric(
+                                                  horizontal: 6, vertical: 2),
+                                              decoration: BoxDecoration(
+                                                color: Colors.orange.withOpacity(0.15),
+                                                borderRadius: BorderRadius.circular(5),
+                                              ),
+                                              child: const Text("Edited",
+                                                  style: TextStyle(
+                                                      fontSize: 10,
+                                                      color: Colors.orange,
+                                                      fontWeight: FontWeight.bold)),
+                                            ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        "Location: ${plan["location"] ?? "--"}  |  Purpose: ${plan["purpose"] ?? "--"}",
+                                        style: const TextStyle(
+                                            fontSize: 12, color: Colors.black54),
+                                      ),
+                                      Text(
+                                        "Priority: ${plan["priority"] ?? "--"}  |  Status: ${plan["status"] ?? "--"}",
+                                        style: const TextStyle(
+                                            fontSize: 12, color: Colors.black54),
+                                      ),
+                                    ],
+                                  ),
+                                )),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  
                   // ---------- Employees list (expand/collapse) ----------
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -2836,7 +3385,7 @@ print("STOP TRACKING STATUS: ${res.statusCode}  BODY: ${res.body}");
                                       CrossAxisAlignment.start,
                                   children: [
                                     const Text(
-                                      "Report Date",
+                                      "Report Date Range",
                                       style: TextStyle(
                                         fontSize: 11,
                                         color: Colors.black54,
@@ -2847,7 +3396,7 @@ print("STOP TRACKING STATUS: ${res.statusCode}  BODY: ${res.body}");
                                     InkWell(
                                       borderRadius:
                                           BorderRadius.circular(10),
-                                      onTap: _pickReportDate,
+                                      onTap: _pickReportDateRange,
                                       child: Container(
                                         padding: const EdgeInsets.symmetric(
                                             horizontal: 12, vertical: 12),
@@ -2866,8 +3415,7 @@ print("STOP TRACKING STATUS: ${res.statusCode}  BODY: ${res.body}");
                                           children: [
                                             Flexible(
                                               child: Text(
-                                                _formatReportDate(
-                                                    selectedReportDate),
+                                                _formatReportDateRange(),
                                                 overflow:
                                                     TextOverflow.ellipsis,
                                                 style: const TextStyle(
@@ -3214,17 +3762,20 @@ print("STOP TRACKING STATUS: ${res.statusCode}  BODY: ${res.body}");
                                     MainAxisAlignment.spaceBetween,
                                 children: [
                                   Row(
-                                    children: const [
-                                      Icon(Icons.timeline_outlined,
-                                          color: primaryBlue, size: 18),
-                                      SizedBox(width: 6),
-                                      Text(
-                                        "Today's Timeline",
-                                        style: TextStyle(
-                                            fontSize: 15,
-                                            fontWeight: FontWeight.bold),
-                                      ),
-                                    ],
+                                    children: [
+  const Icon(Icons.timeline_outlined,
+      color: primaryBlue, size: 18),
+  const SizedBox(width: 6),
+  Text(
+    _formatReportDateRange() == "Today"
+        ? "Today's Timeline"
+        : "Timeline (${_formatReportDateRange()})",
+    style: const TextStyle(
+      fontSize: 15,
+      fontWeight: FontWeight.bold,
+    ),
+  ),
+],
                                   ),
                                   Icon(
                                     isTimelineExpanded
@@ -3281,17 +3832,20 @@ print("STOP TRACKING STATUS: ${res.statusCode}  BODY: ${res.body}");
                                     MainAxisAlignment.spaceBetween,
                                 children: [
                                   Row(
-                                    children: const [
-                                      Icon(Icons.table_chart_outlined,
-                                          color: primaryBlue, size: 18),
-                                      SizedBox(width: 6),
-                                      Text(
-                                        "Stoppage Details",
-                                        style: TextStyle(
-                                            fontSize: 15,
-                                            fontWeight: FontWeight.bold),
-                                      ),
-                                    ],
+                                    children: [
+  const Icon(Icons.table_chart_outlined,
+      color: primaryBlue, size: 18),
+  const SizedBox(width: 6),
+  Text(
+    _formatReportDateRange() == "Today"
+        ? "Stoppage Details"
+        : "Stoppage Details (${_formatReportDateRange()})",
+    style: const TextStyle(
+      fontSize: 15,
+      fontWeight: FontWeight.bold,
+    ),
+  ),
+],
                                   ),
                                   Icon(
                                     isStoppageExpanded
@@ -3327,16 +3881,27 @@ print("STOP TRACKING STATUS: ${res.statusCode}  BODY: ${res.body}");
                                     headingRowColor:
                                         WidgetStateProperty.all(
                                             const Color(0xFFF6F7FB)),
-                                    columns: const [
-                                      DataColumn(label: Text("Start Time")),
-                                      DataColumn(label: Text("End Time")),
-                                      DataColumn(
-                                          label: Text("Address with Area")),
-                                      DataColumn(label: Text("Pincode")),
+                                    columns: [
+                                      if (_isMultiDayReport)
+                                        const DataColumn(
+                                            label: Text("Date")),
+                                      const DataColumn(
+                                          label: Text("Start Time")),
+                                      const DataColumn(
+                                          label: Text("End Time")),
+                                      const DataColumn(
+                                          label:
+                                              Text("Address with Area")),
+                                      const DataColumn(
+                                          label: Text("Pincode")),
                                     ],
                                     rows: sessionAddresses
                                         .map(
                                           (row) => DataRow(cells: [
+                                            if (_isMultiDayReport)
+                                              DataCell(Text(
+                                                  _formatIsoDateOnly(
+                                                      row["startTime"]))),
                                             DataCell(Text(_formatIsoTime(
                                                 row["startTime"]))),
                                             DataCell(Text(row["ongoing"] ==
@@ -3633,9 +4198,11 @@ print("STOP TRACKING STATUS: ${res.statusCode}  BODY: ${res.body}");
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SizedBox(
-            width: 64,
+            width: _isMultiDayReport ? 90 : 64,
             child: Text(
-              _formatIsoTime(event["time"]),
+              _isMultiDayReport
+                  ? _formatIsoDateAndTime(event["time"])
+                  : _formatIsoTime(event["time"]),
               style: const TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.w600,
@@ -3768,7 +4335,7 @@ print("STOP TRACKING STATUS: ${res.statusCode}  BODY: ${res.body}");
     setState(() => isExporting = true);
     try {
       final dateStr =
-          "${selectedReportDate.year}-${selectedReportDate.month.toString().padLeft(2, '0')}-${selectedReportDate.day.toString().padLeft(2, '0')}";
+          "${selectedToDate.year}-${selectedToDate.month.toString().padLeft(2, '0')}-${selectedToDate.day.toString().padLeft(2, '0')}";
 
       final response = await ApiService.exportReportExcel(
         employeeId: selectedEmployeeId!,
@@ -3810,8 +4377,7 @@ print("STOP TRACKING STATUS: ${res.statusCode}  BODY: ${res.body}");
       final doc = pw.Document();
       final isOnline = allEmployees.any((e) =>
           e["id"] == selectedEmployeeId && e["isOnline"] == true);
-      final dateStr =
-          "${selectedReportDate.day}/${selectedReportDate.month}/${selectedReportDate.year}";
+      final dateStr = _formatReportDateRange();
       final events = _buildReportTimeline();
 
       doc.addPage(
@@ -3885,7 +4451,7 @@ print("STOP TRACKING STATUS: ${res.statusCode}  BODY: ${res.body}");
       );
 
       final safeFileDate =
-          "${selectedReportDate.year}-${selectedReportDate.month.toString().padLeft(2, '0')}-${selectedReportDate.day.toString().padLeft(2, '0')}";
+          "${selectedFromDate.year}-${selectedFromDate.month.toString().padLeft(2, '0')}-${selectedFromDate.day.toString().padLeft(2, '0')}_to_${selectedToDate.year}-${selectedToDate.month.toString().padLeft(2, '0')}-${selectedToDate.day.toString().padLeft(2, '0')}";
 
       final bytes = await doc.save();
       await Printing.sharePdf(
@@ -3950,10 +4516,11 @@ print("STOP TRACKING STATUS: ${res.statusCode}  BODY: ${res.body}");
 
     return events;
   }
-  Future<void> _pickReportDate() async {
-    final picked = await showDatePicker(
+  Future<void> _pickReportDateRange() async {
+    final picked = await showDateRangePicker(
       context: context,
-      initialDate: selectedReportDate,
+      initialDateRange:
+          DateTimeRange(start: selectedFromDate, end: selectedToDate),
       firstDate: DateTime(2024, 1, 1),
       lastDate: DateTime.now(),
       builder: (context, child) {
@@ -3970,7 +4537,8 @@ print("STOP TRACKING STATUS: ${res.statusCode}  BODY: ${res.body}");
 
     if (picked != null) {
       setState(() {
-        selectedReportDate = picked;
+        selectedFromDate = picked.start;
+        selectedToDate = picked.end;
       });
       if (selectedEmployeeId != null) {
         _fetchReport(selectedEmployeeId!, selectedEmployeeName ?? "");
@@ -3978,17 +4546,43 @@ print("STOP TRACKING STATUS: ${res.statusCode}  BODY: ${res.body}");
     }
   }
 
-  String _formatReportDate(DateTime date) {
+  bool get _isMultiDayReport =>
+      selectedFromDate.year != selectedToDate.year ||
+      selectedFromDate.month != selectedToDate.month ||
+      selectedFromDate.day != selectedToDate.day;
+
+  String _formatReportDateRange() {
     final now = DateTime.now();
-    final isToday = date.year == now.year &&
-        date.month == now.month &&
-        date.day == now.day;
-    if (isToday) return "Today";
+    final isSingleToday = !_isMultiDayReport &&
+        selectedFromDate.year == now.year &&
+        selectedFromDate.month == now.month &&
+        selectedFromDate.day == now.day;
+    if (isSingleToday) return "Today";
 
     const months = [
       "Jan", "Feb", "Mar", "Apr", "May", "Jun",
       "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
     ];
-    return "${date.day} ${months[date.month - 1]} ${date.year}";
+    String fmt(DateTime d) => "${d.day} ${months[d.month - 1]}";
+
+    if (!_isMultiDayReport) return fmt(selectedFromDate);
+    return "${fmt(selectedFromDate)} - ${fmt(selectedToDate)}";
+  }
+
+  String _formatIsoDateAndTime(dynamic isoValue) {
+    if (isoValue == null) return "--";
+    final dt = DateTime.tryParse(isoValue.toString());
+    if (dt == null) return "--";
+    final hour12 = dt.hour % 12 == 0 ? 12 : dt.hour % 12;
+    final minute = dt.minute.toString().padLeft(2, '0');
+    final ampm = dt.hour >= 12 ? "PM" : "AM";
+    return "${dt.day}/${dt.month} $hour12:$minute $ampm";
+  }
+
+  String _formatIsoDateOnly(dynamic isoValue) {
+    if (isoValue == null) return "--";
+    final dt = DateTime.tryParse(isoValue.toString());
+    if (dt == null) return "--";
+    return "${dt.day}/${dt.month}/${dt.year}";
   }
 }

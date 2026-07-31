@@ -163,10 +163,11 @@ class ApiService {
   /// ==========================
   static Future<http.Response> getReport({
     required int employeeId,
-    required String date, // format: yyyy-MM-dd
+    required String fromDate, // format: yyyy-MM-dd
+    required String toDate,   // format: yyyy-MM-dd
   }) async {
     final url = Uri.parse(
-        "$baseUrl/api/admin/report?employeeId=$employeeId&date=$date");
+        "$baseUrl/api/admin/report?employeeId=$employeeId&fromDate=$fromDate&toDate=$toDate");
 
     try {
       final response = await _client.get(url, headers: headers);
@@ -315,6 +316,41 @@ class ApiService {
   static Future<http.Response> deleteEmployee(int employeeId) async {
     final url = Uri.parse("$baseUrl/api/admin/employees/$employeeId");
     return await _client.delete(url, headers: headers);
+  }
+  /// ==========================
+  /// CREATE PLAN (Employee)
+  /// POST /api/location/plan
+  /// ==========================
+  static Future<http.Response> createPlan(Map<String, dynamic> fields) async {
+    final url = Uri.parse("$baseUrl/api/location/plan");
+    return await _client.post(url, headers: headers, body: jsonEncode(fields));
+  }
+
+  /// ==========================
+  /// UPDATE PLAN (Employee)
+  /// PUT /api/location/plan/{id}
+  /// ==========================
+  static Future<http.Response> updatePlan(int id, Map<String, dynamic> fields) async {
+    final url = Uri.parse("$baseUrl/api/location/plan/$id");
+    return await _client.put(url, headers: headers, body: jsonEncode(fields));
+  }
+
+  /// ==========================
+  /// GET MY TODAY PLANS (Employee)
+  /// GET /api/location/plan/today
+  /// ==========================
+  static Future<http.Response> getMyTodayPlans() async {
+    final url = Uri.parse("$baseUrl/api/location/plan/today");
+    return await _client.get(url, headers: headers);
+  }
+
+  /// ==========================
+  /// GET ALL TODAY PLANS (Admin)
+  /// GET /api/admin/plans/today
+  /// ==========================
+  static Future<http.Response> getAllTodayPlans() async {
+    final url = Uri.parse("$baseUrl/api/admin/plans/today");
+    return await _client.get(url, headers: headers);
   }
   /// ==========================
   /// MY TODAY'S ROUTE (Live tracking path)
