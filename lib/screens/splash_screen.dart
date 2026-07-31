@@ -78,7 +78,7 @@ class _SplashScreenState extends State<SplashScreen> {
             SizedBox(height: 10),
 
             Text(
-              "Powered by Spring Boot & Flutter",
+              "Powered by Saral Erp Complexity and Solutions",
               style: TextStyle(
                 color: Colors.white70,
                 fontSize: 16,
