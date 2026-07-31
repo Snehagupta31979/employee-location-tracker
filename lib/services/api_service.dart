@@ -317,6 +317,16 @@ class ApiService {
     return await _client.delete(url, headers: headers);
   }
   /// ==========================
+  /// MY TODAY'S ROUTE (Live tracking path)
+  /// GET /api/location/history?date=yyyy-MM-dd
+  /// ==========================
+  static Future<http.Response> getLocationHistory({String? date}) async {
+    final url = date != null
+        ? Uri.parse("$baseUrl/api/location/history?date=$date")
+        : Uri.parse("$baseUrl/api/location/history");
+    return await _client.get(url, headers: headers);
+  }
+  /// ==========================
   /// ADD MANUAL STOP (Employee)
   /// POST /api/location/stops/manual
   /// ==========================

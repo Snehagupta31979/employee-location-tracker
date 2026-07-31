@@ -63,6 +63,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
   List<Map<String, dynamic>> nearbyPlaces = [];
   bool isLoadingPlaces = false;
   String? nearbyPlacesError;
+  List<ll.LatLng> myTodayRoute = [];
+  String myRouteDuration = "--";
   final MapController liveMapController = MapController();
   List<Map<String, dynamic>> myTodayStops = [];
   bool isLoadingMyStops = false;
@@ -88,6 +90,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
   String? userRole;
   List<Map<String, dynamic>> reportStops = [];
   List<Map<String, dynamic>> reportTrackingSessions = [];
+  List<ll.LatLng> reportRoute = [];
+  String reportRouteDuration = "--";
   List<Map<String, dynamic>> sessionAddresses = [];
   bool isTimelineExpanded = false;
   bool isStoppageExpanded = false;
@@ -118,6 +122,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _fetchCurrentLocation();
     _fetchUserRole();
     _fetchMyTodayStops();
+    _fetchMyTodayRoute();
     _fetchMyManualStops();
 
     final isAdmin = widget.user["role"] == "ADMIN";
@@ -454,6 +459,47 @@ class _DashboardScreenState extends State<DashboardScreen> {
       print("My Today Stops Error: $e");
       if (!mounted) return;
       setState(() => isLoadingMyStops = false);
+    }
+  }
+  String _computeDuration(List<ll.LatLng> points, List<DateTime> times) {
+    if (times.length < 2) return "--";
+    final duration = times.last.difference(times.first);
+    if (duration.isNegative) return "--";
+    final hours = duration.inHours;
+    final minutes = duration.inMinutes % 60;
+    return "${hours.toString().padLeft(2, '0')} hr ${minutes.toString().padLeft(2, '0')} min";
+  }
+
+  Future<void> _fetchMyTodayRoute() async {
+    try {
+      final response = await ApiService.getLocationHistory();
+
+      if (response.statusCode == 200) {
+        final List<dynamic> data = jsonDecode(response.body);
+
+        final List<ll.LatLng> points = [];
+        final List<DateTime> times = [];
+
+        for (final loc in data) {
+          final lat = loc["latitude"];
+          final lon = loc["longitude"];
+          final recordedAt = DateTime.tryParse(loc["recordedAt"]?.toString() ?? "");
+          if (lat != null && lon != null && recordedAt != null) {
+            points.add(ll.LatLng(lat, lon));
+            times.add(recordedAt);
+          }
+        }
+
+        if (!mounted) return;
+        setState(() {
+          myTodayRoute = points;
+          myRouteDuration = _computeDuration(points, times);
+        });
+      } else if (response.statusCode == 401) {
+        await _handleSessionExpired();
+      }
+    } catch (e) {
+      print("My Route Fetch Error: $e");
     }
   }
   Future<void> _fetchAdminTodayStops() async {
@@ -867,6 +913,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 })
             .toList();
             final List<dynamic> locationsRaw = data["locations"] ?? [];
+            final List<ll.LatLng> routePoints = [];
+        final List<DateTime> routeTimes = [];
+        for (final loc in locationsRaw) {
+          final lat = loc["latitude"];
+          final lon = loc["longitude"];
+          final recordedAt = DateTime.tryParse(loc["recordedAt"]?.toString() ?? "");
+          if (lat != null && lon != null && recordedAt != null) {
+            routePoints.add(ll.LatLng(lat, lon));
+            routeTimes.add(recordedAt);
+          }
+        }
         final List<Map<String, dynamic>> resolvedSessionAddresses = [];
 
         for (final session in sessions) {
@@ -926,6 +983,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
           reportStops = resolvedStops;
           reportTrackingSessions = resolvedSessions;
           sessionAddresses = resolvedSessionAddresses;
+          reportRoute = routePoints;                              // <-- add
+          reportRouteDuration = _computeDuration(routePoints, routeTimes);
           isLoadingReport = false;
         });
       } else {
@@ -993,18 +1052,19 @@ print("STOP TRACKING STATUS: ${res.statusCode}  BODY: ${res.body}");
   }
 
   Future<void> _trackAndSendLocation() async {
-    await _fetchCurrentLocation();
-    if (currentPosition == null) return;
-    try {
-  final res = await ApiService.saveLocation(
-    latitude: currentPosition!.latitude,
-    longitude: currentPosition!.longitude,
-  );
-  print("SAVE LOCATION STATUS: ${res.statusCode}  BODY: ${res.body}");
-} catch (e) {
-  print("Save Location Error: $e");
-}
+  await _fetchCurrentLocation();
+  if (currentPosition == null) return;
+  try {
+    final res = await ApiService.saveLocation(
+      latitude: currentPosition!.latitude,
+      longitude: currentPosition!.longitude,
+    );
+    print("SAVE LOCATION STATUS: ${res.statusCode}  BODY: ${res.body}");
+    await _fetchMyTodayRoute();
+  } catch (e) {
+    print("Save Location Error: $e");
   }
+}
 
   Future<void> _handleLogout() async {
     try {
@@ -1433,6 +1493,24 @@ print("STOP TRACKING STATUS: ${res.statusCode}  BODY: ${res.body}");
                                       fontWeight: FontWeight.bold,
                                     ),
                                   ),
+                                  const Spacer(),
+                                  if (myTodayRoute.length > 1)
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 8, vertical: 4),
+                                      decoration: BoxDecoration(
+                                        color: primaryBlue.withOpacity(0.08),
+                                        borderRadius: BorderRadius.circular(6),
+                                      ),
+                                      child: Text(
+                                        "Traveled: $myRouteDuration",
+                                        style: const TextStyle(
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w600,
+                                          color: primaryBlue,
+                                        ),
+                                      ),
+                                    ),
                                 ],
                               ),
                               const SizedBox(height: 12),
@@ -1590,8 +1668,11 @@ print("STOP TRACKING STATUS: ${res.statusCode}  BODY: ${res.body}");
                                               color: primaryBlue,
                                               size: 34,
                                             ),
+                                            
                                           ),
+                                          
                                         ],
+                                        
                                       ),
                                       MarkerLayer(
                                         markers: nearbyPlaces.map((place) {
@@ -1608,6 +1689,15 @@ print("STOP TRACKING STATUS: ${res.statusCode}  BODY: ${res.body}");
                                           );
                                         }).toList(),
                                       ),
+                                      PolylineLayer(
+                                      polylines: [
+                                        Polyline(
+                                          points: myTodayRoute,
+                                          strokeWidth: 4,
+                                          color: primaryBlue,
+                                        ),
+                                      ],
+                                    ),
                                     ],
                                   ),
                           ),
@@ -2572,6 +2662,17 @@ print("STOP TRACKING STATUS: ${res.statusCode}  BODY: ${res.body}");
                                     ),
                                   ),
                                 ],
+                                if (reportRoute.isNotEmpty) ...[
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    "Route duration: $reportRouteDuration",
+                                    style: const TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                      color: primaryBlue,
+                                    ),
+                                  ),
+                                ],
                               ],
                             ),
                           ),
@@ -2621,6 +2722,15 @@ print("STOP TRACKING STATUS: ${res.statusCode}  BODY: ${res.body}");
                                         )
                                         .toList(),
                                   ),
+                                  PolylineLayer(
+                                  polylines: [
+                                    Polyline(
+                                      points: reportRoute,
+                                      strokeWidth: 4,
+                                      color: Colors.orange,
+                                    ),
+                                  ],
+                                ),
                                 ],
                               ),
                             ),
