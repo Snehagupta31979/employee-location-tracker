@@ -2774,6 +2774,7 @@ print("STOP TRACKING STATUS: ${res.statusCode}  BODY: ${res.body}");
                                 Expanded(
                                   child: DropdownButtonFormField<String>(
                                     value: planPriority,
+                                    isExpanded: true, 
                                     decoration: InputDecoration(
                                       labelText: "Priority",
                                       filled: true,
@@ -2794,6 +2795,7 @@ print("STOP TRACKING STATUS: ${res.statusCode}  BODY: ${res.body}");
                                 Expanded(
                                   child: DropdownButtonFormField<String>(
                                     value: planStatus,
+                                    isExpanded: true,
                                     decoration: InputDecoration(
                                       labelText: "Status",
                                       filled: true,
