@@ -56,6 +56,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   bool isTracking = false;
   static const String _trackingPrefsKey = "is_tracking_active";
+  static const String _trackingStartPrefsKey = "tracking_session_start";
+  DateTime? _trackingSessionStart;
   double todaysDistanceKm = 0.0;
   Position? currentPosition;
   DateTime? lastUpdated;
@@ -84,6 +86,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
   String planPriority = "MEDIUM";
   String planStatus = "PENDING";
   bool isSubmittingPlan = false;
+  List<Map<String, dynamic>> locationSuggestions = [];
+  bool isSearchingLocation = false;
+  Timer? _locationSearchDebounce;
 
   List<Map<String, dynamic>> adminAllPlans = [];
   bool isLoadingAdminPlans = false;
@@ -142,6 +147,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _fetchMyManualStops();
     _resumeTrackingIfNeeded();
     _fetchTodayDistance();
+    _fetchMyTodayRoute();
 
     final isAdmin = widget.user["role"] == "ADMIN";
     activityTimeline.add(
@@ -160,6 +166,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     locationController.dispose();
     purposeController.dispose();
     _adminRefreshTimer?.cancel();
+    _locationSearchDebounce?.cancel();
     super.dispose();
   }
 
@@ -505,6 +512,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final minutes = duration.inMinutes % 60;
     return "${hours.toString().padLeft(2, '0')} hr ${minutes.toString().padLeft(2, '0')} min";
   }
+  String get _liveTraveledDuration {
+    if (_trackingSessionStart == null) return "--";
+    final duration = DateTime.now().difference(_trackingSessionStart!);
+    if (duration.isNegative) return "--";
+    final hours = duration.inHours;
+    final minutes = duration.inMinutes % 60;
+    return "${hours.toString().padLeft(2, '0')} hr ${minutes.toString().padLeft(2, '0')} min";
+  }
 
   Future<void> _fetchMyTodayRoute() async {
     try {
@@ -781,6 +796,62 @@ class _DashboardScreenState extends State<DashboardScreen> {
         );
       },
     );
+  }
+  void _searchLocationSuggestions(String query) {
+    _locationSearchDebounce?.cancel();
+
+    if (query.trim().length < 3) {
+      setState(() => locationSuggestions = []);
+      return;
+    }
+
+    _locationSearchDebounce = Timer(const Duration(milliseconds: 500), () async {
+      setState(() => isSearchingLocation = true);
+      try {
+        String viewboxParam = "";
+        if (currentPosition != null) {
+          // Roughly a ~30km box around the employee's current location
+          final lat = currentPosition!.latitude;
+          final lon = currentPosition!.longitude;
+          const delta = 0.3;
+          final left = lon - delta;
+          final top = lat + delta;
+          final right = lon + delta;
+          final bottom = lat - delta;
+          viewboxParam = "&viewbox=$left,$top,$right,$bottom&bounded=1";
+        }
+
+        final response = await http
+            .get(
+              Uri.parse(
+                  "https://nominatim.openstreetmap.org/search?q=${Uri.encodeComponent(query)}&format=json&limit=6$viewboxParam"),
+              headers: {"User-Agent": "employee_tracker_app/1.0"},
+            )
+            .timeout(const Duration(seconds: 10));
+
+        if (response.statusCode == 200) {
+          final List<dynamic> data = jsonDecode(response.body);
+          if (!mounted) return;
+          setState(() {
+            locationSuggestions = data
+                .map((e) => {
+                      "name": e["display_name"],
+                      "lat": double.tryParse(e["lat"].toString()),
+                      "lon": double.tryParse(e["lon"].toString()),
+                    })
+                .toList();
+            isSearchingLocation = false;
+          });
+        } else {
+          if (!mounted) return;
+          setState(() => isSearchingLocation = false);
+        }
+      } catch (e) {
+        print("Location Search Error: $e");
+        if (!mounted) return;
+        setState(() => isSearchingLocation = false);
+      }
+    });
   }
   Future<void> _fetchManualStops() async {
     setState(() => isLoadingManualStops = true);
@@ -1256,6 +1327,9 @@ print("START TRACKING STATUS: ${res.statusCode}  BODY: ${res.body}");
           const Duration(seconds: 15), (_) => _trackAndSendLocation());
           final prefs = await SharedPreferences.getInstance();
       await prefs.setBool(_trackingPrefsKey, true);
+      _trackingSessionStart = DateTime.now();
+      await prefs.setString(
+          _trackingStartPrefsKey, _trackingSessionStart!.toIso8601String());
     } else {
       try {
         final res = await ApiService.stopTracking();
@@ -1265,6 +1339,8 @@ print("STOP TRACKING STATUS: ${res.statusCode}  BODY: ${res.body}");
       }
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool(_trackingPrefsKey, false);
+      await prefs.remove(_trackingStartPrefsKey);
+      _trackingSessionStart = null;
 
       activityTimeline.insert(
         0,
@@ -1281,6 +1357,10 @@ print("STOP TRACKING STATUS: ${res.statusCode}  BODY: ${res.body}");
     final prefs = await SharedPreferences.getInstance();
     final wasTracking = prefs.getBool(_trackingPrefsKey) ?? false;
     if (!wasTracking) return;
+
+    final startStr = prefs.getString(_trackingStartPrefsKey);
+    _trackingSessionStart =
+        startStr != null ? DateTime.tryParse(startStr) : DateTime.now();
 
     setState(() {
       isTracking = true;
@@ -1305,6 +1385,7 @@ print("STOP TRACKING STATUS: ${res.statusCode}  BODY: ${res.body}");
   print("Save Location Error: $e");
 }
     await _fetchTodayDistance();
+    await _fetchMyTodayRoute();
   }
 
   Future<void> _handleLogout() async {
@@ -1735,7 +1816,7 @@ print("STOP TRACKING STATUS: ${res.statusCode}  BODY: ${res.body}");
                                     ),
                                   ),
                                   const Spacer(),
-                                  if (myTodayRoute.length > 1)
+                                  if (_trackingSessionStart != null)
                                     Container(
                                       padding: const EdgeInsets.symmetric(
                                           horizontal: 8, vertical: 4),
@@ -1744,7 +1825,7 @@ print("STOP TRACKING STATUS: ${res.statusCode}  BODY: ${res.body}");
                                         borderRadius: BorderRadius.circular(6),
                                       ),
                                       child: Text(
-                                        "Traveled: $myRouteDuration",
+                                        "Traveled: $_liveTraveledDuration",
                                         style: const TextStyle(
                                           fontSize: 11,
                                           fontWeight: FontWeight.w600,
@@ -2722,6 +2803,7 @@ print("STOP TRACKING STATUS: ${res.statusCode}  BODY: ${res.body}");
                             const SizedBox(height: 10),
                             TextField(
                               controller: locationController,
+                              onChanged: _searchLocationSuggestions,
                               decoration: InputDecoration(
                                 labelText: "Location",
                                 filled: true,
@@ -2736,6 +2818,45 @@ print("STOP TRACKING STATUS: ${res.statusCode}  BODY: ${res.body}");
                                 ),
                               ),
                             ),
+                            if (isSearchingLocation)
+                              const Padding(
+                                padding: EdgeInsets.only(top: 8),
+                                child: Text("Searching...",
+                                    style: TextStyle(fontSize: 12, color: Colors.black45)),
+                              ),
+                            if (!isSearchingLocation && locationSuggestions.isNotEmpty)
+                              Container(
+                                margin: const EdgeInsets.only(top: 6),
+                                constraints: const BoxConstraints(maxHeight: 180),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFF6F7FB),
+                                  borderRadius: BorderRadius.circular(10),
+                                  border: Border.all(color: const Color(0xFFE1E4ED)),
+                                ),
+                                child: ListView.builder(
+                                  shrinkWrap: true,
+                                  padding: EdgeInsets.zero,
+                                  itemCount: locationSuggestions.length,
+                                  itemBuilder: (context, index) {
+                                    final s = locationSuggestions[index];
+                                    return ListTile(
+                                      dense: true,
+                                      leading: const Icon(Icons.place_outlined,
+                                          color: primaryBlue, size: 18),
+                                      title: Text(
+                                        s["name"] ?? "",
+                                        style: const TextStyle(fontSize: 12),
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                      onTap: () {
+                                        locationController.text = s["name"] ?? "";
+                                        setState(() => locationSuggestions = []);
+                                      },
+                                    );
+                                  },
+                                ),
+                              ),
                             const SizedBox(height: 10),
                             TextField(
                               controller: purposeController,
@@ -2749,105 +2870,139 @@ print("STOP TRACKING STATUS: ${res.statusCode}  BODY: ${res.body}");
                               ),
                             ),
                             const SizedBox(height: 10),
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: InkWell(
-                                    onTap: () async {
-                                      final picked = await showTimePicker(
-                                        context: context,
-                                        initialTime: planStartTime ?? TimeOfDay.now(),
-                                      );
-                                      if (picked != null) {
-                                        setState(() => planStartTime = picked);
-                                      }
-                                    },
-                                    child: Container(
-                                      padding: const EdgeInsets.symmetric(
-                                          horizontal: 12, vertical: 14),
-                                      decoration: BoxDecoration(
-                                        color: const Color(0xFFF6F7FB),
-                                        borderRadius: BorderRadius.circular(10),
+                            SizedBox(
+                              width: double.infinity,
+                              child: Row(
+                                children: [
+                                  Expanded(
+                                    child: InkWell(
+                                      onTap: () async {
+                                        final picked = await showTimePicker(
+                                          context: context,
+                                          initialTime: planStartTime ?? TimeOfDay.now(),
+                                        );
+                                        if (picked != null) {
+                                          setState(() => planStartTime = picked);
+                                        }
+                                      },
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 12, vertical: 14),
+                                        decoration: BoxDecoration(
+                                          color: const Color(0xFFF6F7FB),
+                                          borderRadius: BorderRadius.circular(10),
+                                        ),
+                                        child: Text(
+                                          planStartTime == null
+                                              ? "Start"
+                                              : planStartTime!.format(context),
+                                          overflow: TextOverflow.ellipsis,
+                                          maxLines: 1,
+                                        ),
                                       ),
-                                      child: Text(planStartTime == null
-                                          ? "Start"
-                                          : planStartTime!.format(context)),
                                     ),
                                   ),
-                                ),
-                                const SizedBox(width: 10),
-                                Expanded(
-                                  child: InkWell(
-                                    onTap: () async {
-                                      final picked = await showTimePicker(
-                                        context: context,
-                                        initialTime: planEndTime ?? TimeOfDay.now(),
-                                      );
-                                      if (picked != null) {
-                                        setState(() => planEndTime = picked);
-                                      }
-                                    },
-                                    child: Container(
-                                      padding: const EdgeInsets.symmetric(
-                                          horizontal: 12, vertical: 14),
-                                      decoration: BoxDecoration(
-                                        color: const Color(0xFFF6F7FB),
-                                        borderRadius: BorderRadius.circular(10),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: InkWell(
+                                      onTap: () async {
+                                        final picked = await showTimePicker(
+                                          context: context,
+                                          initialTime: planEndTime ?? TimeOfDay.now(),
+                                        );
+                                        if (picked != null) {
+                                          setState(() => planEndTime = picked);
+                                        }
+                                      },
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 12, vertical: 14),
+                                        decoration: BoxDecoration(
+                                          color: const Color(0xFFF6F7FB),
+                                          borderRadius: BorderRadius.circular(10),
+                                        ),
+                                        child: Text(
+                                          planEndTime == null
+                                              ? "End"
+                                              : planEndTime!.format(context),
+                                          overflow: TextOverflow.ellipsis,
+                                          maxLines: 1,
+                                        ),
                                       ),
-                                      child: Text(planEndTime == null
-                                          ? "End"
-                                          : planEndTime!.format(context)),
                                     ),
                                   ),
-                                ),
-                              ],
+                                ],
+                              ),
                             ),
                             const SizedBox(height: 10),
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: DropdownButtonFormField<String>(
-                                    value: planPriority,
-                                    isExpanded: true, 
-                                    decoration: InputDecoration(
-                                      labelText: "Priority",
-                                      filled: true,
-                                      fillColor: const Color(0xFFF6F7FB),
-                                      border: OutlineInputBorder(
-                                          borderRadius: BorderRadius.circular(10),
-                                          borderSide: BorderSide.none),
-                                    ),
-                                    items: const ["LOW", "MEDIUM", "HIGH"]
-                                        .map((p) => DropdownMenuItem(value: p, child: Text(p)))
-                                        .toList(),
-                                    onChanged: (v) {
-                                      if (v != null) setState(() => planPriority = v);
-                                    },
-                                  ),
-                                ),
-                                const SizedBox(width: 10),
-                                Expanded(
-                                  child: DropdownButtonFormField<String>(
-                                    value: planStatus,
-                                    isExpanded: true,
-                                    decoration: InputDecoration(
-                                      labelText: "Status",
-                                      filled: true,
-                                      fillColor: const Color(0xFFF6F7FB),
-                                      border: OutlineInputBorder(
-                                          borderRadius: BorderRadius.circular(10),
-                                          borderSide: BorderSide.none),
-                                    ),
-                                    items: const ["PENDING", "IN_PROGRESS", "COMPLETED"]
-                                        .map((s) => DropdownMenuItem(value: s, child: Text(s)))
-                                        .toList(),
-                                    onChanged: (v) {
-                                      if (v != null) setState(() => planStatus = v);
-                                    },
-                                  ),
-                                ),
-                              ],
-                            ),
+                            SizedBox(
+  width: double.infinity,
+  child: Row(
+    children: [
+      Expanded(
+        child: DropdownButtonFormField<String>(
+          value: planPriority,
+          isExpanded: true,
+          decoration: InputDecoration(
+            labelText: "Priority",
+            filled: true,
+            fillColor: const Color(0xFFF6F7FB),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(10),
+              borderSide: BorderSide.none,
+            ),
+          ),
+          items: const ["LOW", "MEDIUM", "HIGH"]
+              .map(
+                (p) => DropdownMenuItem<String>(
+                  value: p,
+                  child: Text(p),
+                ),
+              )
+              .toList(),
+          onChanged: (v) {
+            if (v != null) {
+              setState(() => planPriority = v);
+            }
+          },
+        ),
+      ),
+      const SizedBox(width: 10),
+      Expanded(
+        child: DropdownButtonFormField<String>(
+          value: planStatus,
+          isExpanded: true,
+          decoration: InputDecoration(
+            labelText: "Status",
+            filled: true,
+            fillColor: const Color(0xFFF6F7FB),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(10),
+              borderSide: BorderSide.none,
+            ),
+          ),
+          items: const [
+            "PENDING",
+            "IN_PROGRESS",
+            "COMPLETED",
+          ]
+              .map(
+                (s) => DropdownMenuItem<String>(
+                  value: s,
+                  child: Text(s),
+                ),
+              )
+              .toList(),
+          onChanged: (v) {
+            if (v != null) {
+              setState(() => planStatus = v);
+            }
+          },
+        ),
+      ),
+    ],
+  ),
+),
                             const SizedBox(height: 14),
                             SizedBox(
                               width: double.infinity,
