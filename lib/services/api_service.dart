@@ -270,6 +270,14 @@ class ApiService {
     return await _client.get(url, headers: headers);
   }
   /// ==========================
+  /// MY TODAY'S STOPS (merged: manual sessions + physical stops)
+  /// GET /api/location/stops/all
+  /// ==========================
+  static Future<http.Response> getAllMyStopsToday() async {
+    final url = Uri.parse("$baseUrl/api/location/stops/all");
+    return await _client.get(url, headers: headers);
+  }
+  /// ==========================
   /// ALL EMPLOYEES' STOPS TODAY (Admin)
   /// GET /api/admin/stops/today
   /// ==========================

@@ -451,7 +451,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Future<void> _fetchMyTodayStops() async {
     setState(() => isLoadingMyStops = true);
     try {
-      final response = await ApiService.getTodayStops();
+      final response = await ApiService.getAllMyStopsToday();
 
       if (response.statusCode == 200) {
         final List<dynamic> data = jsonDecode(response.body);
