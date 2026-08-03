@@ -254,6 +254,14 @@ class ApiService {
     );
   }
   /// ==========================
+  /// TODAY'S DISTANCE (self)
+  /// GET /api/location/distance
+  /// ==========================
+  static Future<http.Response> getTodayDistance() async {
+    final url = Uri.parse("$baseUrl/api/location/distance");
+    return await _client.get(url, headers: headers);
+  }
+  /// ==========================
   /// MY TODAY'S STOPS
   /// GET /api/location/stops
   /// ==========================

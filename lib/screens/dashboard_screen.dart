@@ -55,6 +55,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   ];
 
   bool isTracking = false;
+  static const String _trackingPrefsKey = "is_tracking_active";
   double todaysDistanceKm = 0.0;
   Position? currentPosition;
   DateTime? lastUpdated;
@@ -138,9 +139,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _fetchCurrentLocation();
     _fetchUserRole();
     _fetchMyTodayStops();
-    _fetchMyTodayPlans();
-    _fetchMyTodayRoute();
     _fetchMyManualStops();
+    _resumeTrackingIfNeeded();
+    _fetchTodayDistance();
 
     final isAdmin = widget.user["role"] == "ADMIN";
     activityTimeline.add(
@@ -183,6 +184,21 @@ class _DashboardScreenState extends State<DashboardScreen> {
       });
     } catch (e) {
       print("Location Error: $e");
+    }
+  }
+  Future<void> _fetchTodayDistance() async {
+    try {
+      final response = await ApiService.getTodayDistance();
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (!mounted) return;
+        setState(() {
+          todaysDistanceKm =
+              (data["distanceKm"] as num?)?.toDouble() ?? 0.0;
+        });
+      }
+    } catch (e) {
+      print("Distance Fetch Error: $e");
     }
   }
   Future<void> _refreshMapLocation() async {
@@ -1238,6 +1254,8 @@ print("START TRACKING STATUS: ${res.statusCode}  BODY: ${res.body}");
       await _trackAndSendLocation();
       _trackingTimer = Timer.periodic(
           const Duration(seconds: 15), (_) => _trackAndSendLocation());
+          final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_trackingPrefsKey, true);
     } else {
       try {
         final res = await ApiService.stopTracking();
@@ -1245,6 +1263,8 @@ print("STOP TRACKING STATUS: ${res.statusCode}  BODY: ${res.body}");
       } catch (e) {
         print("Stop Tracking Error: $e");
       }
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_trackingPrefsKey, false);
 
       activityTimeline.insert(
         0,
@@ -1257,21 +1277,35 @@ print("STOP TRACKING STATUS: ${res.statusCode}  BODY: ${res.body}");
       _trackingTimer?.cancel();
     }
   }
+  Future<void> _resumeTrackingIfNeeded() async {
+    final prefs = await SharedPreferences.getInstance();
+    final wasTracking = prefs.getBool(_trackingPrefsKey) ?? false;
+    if (!wasTracking) return;
+
+    setState(() {
+      isTracking = true;
+    });
+
+    await _trackAndSendLocation();
+    _trackingTimer?.cancel();
+    _trackingTimer = Timer.periodic(
+        const Duration(seconds: 15), (_) => _trackAndSendLocation());
+  }
 
   Future<void> _trackAndSendLocation() async {
-  await _fetchCurrentLocation();
-  if (currentPosition == null) return;
-  try {
-    final res = await ApiService.saveLocation(
-      latitude: currentPosition!.latitude,
-      longitude: currentPosition!.longitude,
-    );
-    print("SAVE LOCATION STATUS: ${res.statusCode}  BODY: ${res.body}");
-    await _fetchMyTodayRoute();
-  } catch (e) {
-    print("Save Location Error: $e");
-  }
+    await _fetchCurrentLocation();
+    if (currentPosition == null) return;
+    try {
+  final res = await ApiService.saveLocation(
+    latitude: currentPosition!.latitude,
+    longitude: currentPosition!.longitude,
+  );
+  print("SAVE LOCATION STATUS: ${res.statusCode}  BODY: ${res.body}");
+} catch (e) {
+  print("Save Location Error: $e");
 }
+    await _fetchTodayDistance();
+  }
 
   Future<void> _handleLogout() async {
     try {
